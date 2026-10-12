@@ -14,7 +14,7 @@ public class PlayerMovement : MonoBehaviour
 
     [Header("Dash Inpulse Speed")]
     public float dashImpulseSpeed = 10f;
-    private bool hasDashed;
+    public bool hasDashed;
     private float nextDashTime;
 
     [Header("Jump Force")]
@@ -28,6 +28,13 @@ public class PlayerMovement : MonoBehaviour
     public float groundCheckDelay = 0.2f;
     private float nextGroundCheckTime;
 
+    [Header("Push Force")]
+    [SerializeField] private float pushForce = 5f;
+    public bool hasPushed;
+    private float nextPushTime;
+    public LayerMask pushLayer;
+    private float pushCheckRadius = 1.5f;
+
     [Header("Components")]
     public Rigidbody rb;
 
@@ -39,22 +46,22 @@ public class PlayerMovement : MonoBehaviour
 
     void FixedUpdate()
     {
+        //consume ground check rotation of player and dash impulse on input
         Grounded();
         RotatePlayer();
         Dash();
+        Push();
 
-        if (hasDashed &&
-            Time.time >= nextDashTime - inputManager.dashCooldownTime + 0.15f)
-        {
+
+        if (hasDashed && Time.time >= nextDashTime - inputManager.dashCooldownTime + 0.15f)
             hasDashed = false;
-        }
+        
 
         //if we are not dashing move the player character using the input values and move speed
         if (!hasDashed)
-        {
-            rb.linearVelocity = new Vector3(
-                inputManager.moveInput.x * movementSpeed, rb.linearVelocity.y, inputManager.moveInput.y * movementSpeed);
-        }
+            rb.linearVelocity = new Vector3(inputManager.moveInput.x * movementSpeed, rb.linearVelocity.y, inputManager.moveInput.y * movementSpeed);
+        
+
         //if we're allowed to jump and we're grounded and the currrent y velocity is 0 then we can jump
         if (inputManager.jumpReady && inputManager.isGrounded && rb.linearVelocity.y <= 0f)
         {
@@ -63,9 +70,12 @@ public class PlayerMovement : MonoBehaviour
             nextGroundCheckTime = Time.time + groundCheckDelay;
             inputManager.isGrounded = false;
         }
-        
-
         inputManager.jumpReady = false;
+
+        //when not grounded apply extra downward force on the character
+        if (!inputManager.isGrounded)
+            rb.AddForce(Vector3.down * 20f, ForceMode.Acceleration);
+        
     }
 
     //check within a radius around groundCheck transform and ground layer whether we can jump
@@ -78,6 +88,7 @@ public class PlayerMovement : MonoBehaviour
     
     public void RotatePlayer()
     {
+        //current move direction is the x and y input of WASD or GamePad Left Stick
         Vector3 moveDirection = new Vector3(inputManager.moveInput.x,0f,inputManager.moveInput.y);
 
         if (moveDirection.sqrMagnitude > 0f)
@@ -88,11 +99,40 @@ public class PlayerMovement : MonoBehaviour
     {
         if(inputManager.dashReady && Time.time >= nextDashTime)
         {
+            //add force in the direction that the orientation is facing
             rb.AddForce(orientation.forward * dashImpulseSpeed, ForceMode.Impulse);
             nextDashTime = Time.time + inputManager.dashCooldownTime;
             hasDashed = true;
+
+            //set dash parameter in animator and add cross fade on layer 2 with 0.05s fade 
+            GetComponentInChildren<Animator>().SetTrigger("Dash");
         }
         inputManager.dashReady = false;
         
+    }
+
+    private void Push()
+    {
+        if(inputManager.pushReady && Time.time >= nextPushTime)
+        {
+            //when we press push check for nearby targets in the push layer
+            Collider[] hits = Physics.OverlapSphere(orientation.position + orientation.forward, pushCheckRadius, pushLayer);
+
+            //for each collision find its attached rigidbody and add a force forward with pushForce
+            foreach(Collider hit in hits)
+            {
+                Rigidbody target = hit.attachedRigidbody;
+
+                if(target != null && target != rb)
+                    target.AddForce(orientation.forward * pushForce, ForceMode.Impulse);
+
+            }
+
+            GetComponentInChildren<Animator>().SetTrigger("Push");
+            nextPushTime = Time.time + inputManager.pushCooldownTime;
+            hasPushed = true;
+        }
+        inputManager.pushReady = false;
+        hasPushed = false;
     }
 }
