@@ -1,8 +1,7 @@
 using Unity.Netcode;
 using Unity.Netcode.Components;
 using UnityEngine;
-using UnityEngine.UIElements;
-
+using System.Collections.Generic;
 public class PlayerMovement : NetworkBehaviour
 {
 
@@ -34,8 +33,14 @@ public class PlayerMovement : NetworkBehaviour
     [SerializeField] private float pushForce = 5f;
     public bool hasPushed;
     private float nextPushTime;
+    //check push cooldown separately on the server
+    private float nextServerPushTime;
     public LayerMask pushLayer;
     private float pushCheckRadius = 1.5f;
+
+    //give knockback time to move the player before normal movement takes over
+    [SerializeField] private float knockbackTime = 0.3f;
+    private float knockbackEndTime;
 
     [Header("Components")]
     public Rigidbody rb;
@@ -64,14 +69,13 @@ public class PlayerMovement : NetworkBehaviour
 
         if (hasDashed && Time.time >= nextDashTime - inputManager.dashCooldownTime + 0.15f)
             hasDashed = false;
-        
 
-        //if we are not dashing move the player character using the input values and move speed
-        if (!hasDashed)
+        //dont overwrite horizontal velocity while dashing or being pushed
+        if (!hasDashed && Time.time >= knockbackEndTime)
             rb.linearVelocity = new Vector3(inputManager.moveInput.x * movementSpeed, rb.linearVelocity.y, inputManager.moveInput.y * movementSpeed);
         
 
-        //if we're allowed to jump and we're grounded and the currrent y velocity is 0 then we can jump
+        //if were allowed to jump and were grounded and the currrent y velocity is 0 then we can jump
         if (inputManager.jumpReady && inputManager.isGrounded && rb.linearVelocity.y <= 0f)
         {
             rb.AddForce(Vector3.up * jumpForce, ForceMode.Impulse);
@@ -102,15 +106,16 @@ public class PlayerMovement : NetworkBehaviour
 
         if (moveDirection.sqrMagnitude > 0f)
         {
-            //rotate the player root so netcode syncs the direction to other clients
+            //rotate the player root so netcode syncs the direction
             Quaternion nextRotation = Quaternion.RotateTowards(rb.rotation, Quaternion.LookRotation(moveDirection), turnSpeed * Time.fixedDeltaTime);
+
             rb.MoveRotation(nextRotation);
         }
-        
     }
     private void Dash()
     {
-        if(inputManager.dashReady && Time.time >= nextDashTime)
+        //don't start a dash while were being pushed
+        if(inputManager.dashReady && Time.time >= nextDashTime && Time.time >= knockbackEndTime)
         {
             //add force in the direction that the orientation is facing
             rb.AddForce(orientation.forward * dashImpulseSpeed, ForceMode.Impulse);
@@ -126,27 +131,60 @@ public class PlayerMovement : NetworkBehaviour
 
     private void Push()
     {
-        if(inputManager.pushReady && Time.time >= nextPushTime)
+        if (inputManager.pushReady && Time.time >= nextPushTime)
         {
-            //when we press push check for nearby targets in the push layer
-            Collider[] hits = Physics.OverlapSphere(orientation.position + orientation.forward, pushCheckRadius, pushLayer);
+            //ask the server to check the push
+            RequestPushRpc();
 
-            //for each collision find its attached rigidbody and add a force forward with pushForce
-            foreach(Collider hit in hits)
-            {
-                Rigidbody target = hit.attachedRigidbody;
-
-                if(target != null && target != rb)
-                    target.AddForce(orientation.forward * pushForce, ForceMode.Impulse);
-
-            }
-
-            //send the push trigger through netcode so everyone sees it
+            //play the animation straight away for responsive input
             networkAnimator.SetTrigger("Push");
+
             nextPushTime = Time.time + inputManager.pushCooldownTime;
-            hasPushed = true;
         }
+
         inputManager.pushReady = false;
-        hasPushed = false;
+    }
+    
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
+    private void RequestPushRpc()
+    {
+        //check the cooldown on the server as well
+        if (Time.time < nextServerPushTime)
+            return;
+
+        nextServerPushTime = Time.time + inputManager.pushCooldownTime;
+
+        //use the player's position and direction known by the server
+        Vector3 pushDirection = orientation.forward;
+        Vector3 checkPosition = orientation.position + pushDirection;
+
+        Collider[] hits = Physics.OverlapSphere(checkPosition, pushCheckRadius, pushLayer);
+
+        //a player with multiple colliders should only get pushed once
+        HashSet<PlayerMovement> pushedPlayers = new HashSet<PlayerMovement>();
+
+        foreach (Collider hit in hits)
+        {
+            PlayerMovement target = hit.GetComponentInParent<PlayerMovement>();
+
+            //ignore ourselves and anything that isn't a spawned player
+            if (target == null || target == this || !target.IsSpawned)
+                continue;
+
+            if (!pushedPlayers.Add(target))
+                continue;
+
+            //tell the targets owner to apply the approved force
+            target.ApplyKnockbackRpc(pushDirection * pushForce);
+        }
+    }
+
+    [Rpc(SendTo.Owner, InvokePermission = RpcInvokePermission.Server)]
+    private void ApplyKnockbackRpc(Vector3 force)
+    {
+        //leave horizontal velocity alone briefly so the push can move us
+        knockbackEndTime = Time.time + knockbackTime;
+
+        rb.AddForce(force, ForceMode.Impulse);
     }
 }
