@@ -18,7 +18,7 @@ public class PlayerAnimation : MonoBehaviour
         Vector3 velocity = playerMovement.rb.linearVelocity;
         velocity.y = 0f;
 
-        anim.SetFloat("movementSpeed", velocity.magnitude, 0.05f, Time.deltaTime);
+        anim.SetFloat("movementSpeed", velocity.magnitude, 0.025f, Time.deltaTime);
         anim.SetBool("isGrounded", inputManager.isGrounded);
     }
 }

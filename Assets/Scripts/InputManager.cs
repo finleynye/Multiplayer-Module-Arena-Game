@@ -54,7 +54,6 @@ public class InputManager : MonoBehaviour
         pushAction.performed += OnPush;
         pushAction.canceled += OnPush;
 
-
     }
 
     void OnDisable()
