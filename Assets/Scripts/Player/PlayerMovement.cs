@@ -1,7 +1,9 @@
+using Unity.Netcode;
+using Unity.Netcode.Components;
 using UnityEngine;
 using UnityEngine.UIElements;
 
-public class PlayerMovement : MonoBehaviour
+public class PlayerMovement : NetworkBehaviour
 {
 
     [Header("Input")]
@@ -37,15 +39,22 @@ public class PlayerMovement : MonoBehaviour
 
     [Header("Components")]
     public Rigidbody rb;
+    private NetworkAnimator networkAnimator;
 
 
-    void Start()
+    void Awake()
     {
         rb = GetComponent<Rigidbody>();
+        //cache the network animator so dash and push are sent to other clients
+        networkAnimator = GetComponentInChildren<NetworkAnimator>();
     }
 
     void FixedUpdate()
     {
+        //only move the player owned by this client after it has spawned
+        if (!IsSpawned || !IsOwner)
+            return;
+        
         //consume ground check rotation of player and dash impulse on input
         Grounded();
         RotatePlayer();
@@ -92,7 +101,11 @@ public class PlayerMovement : MonoBehaviour
         Vector3 moveDirection = new Vector3(inputManager.moveInput.x,0f,inputManager.moveInput.y);
 
         if (moveDirection.sqrMagnitude > 0f)
-            orientation.rotation = Quaternion.RotateTowards(orientation.rotation, Quaternion.LookRotation(moveDirection), turnSpeed * Time.fixedDeltaTime);
+        {
+            //rotate the player root so netcode syncs the direction to other clients
+            Quaternion nextRotation = Quaternion.RotateTowards(rb.rotation, Quaternion.LookRotation(moveDirection), turnSpeed * Time.fixedDeltaTime);
+            rb.MoveRotation(nextRotation);
+        }
         
     }
     private void Dash()
@@ -104,8 +117,8 @@ public class PlayerMovement : MonoBehaviour
             nextDashTime = Time.time + inputManager.dashCooldownTime;
             hasDashed = true;
 
-            //set dash parameter in animator and add cross fade on layer 2 with 0.05s fade 
-            GetComponentInChildren<Animator>().SetTrigger("Dash");
+            //send the dash trigger through netcode so everyone sees it
+            networkAnimator.SetTrigger("Dash");
         }
         inputManager.dashReady = false;
         
@@ -128,7 +141,8 @@ public class PlayerMovement : MonoBehaviour
 
             }
 
-            GetComponentInChildren<Animator>().SetTrigger("Push");
+            //send the push trigger through netcode so everyone sees it
+            networkAnimator.SetTrigger("Push");
             nextPushTime = Time.time + inputManager.pushCooldownTime;
             hasPushed = true;
         }

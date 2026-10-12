@@ -1,7 +1,7 @@
-using System;
+using Unity.Netcode;
 using UnityEngine;
 
-public class PlayerAnimation : MonoBehaviour
+public class PlayerAnimation : NetworkBehaviour
 {
     [SerializeField] private Animator anim;
     [SerializeField] private PlayerMovement playerMovement;
@@ -12,9 +12,12 @@ public class PlayerAnimation : MonoBehaviour
         anim = GetComponent<Animator>();
     }
 
-    // Update is called once per frame
     void Update()
     {
+        //only the owner sets animation values so other clients keep the synced values
+        if (!IsSpawned || !IsOwner)
+            return;
+
         Vector3 velocity = playerMovement.rb.linearVelocity;
         velocity.y = 0f;
 
