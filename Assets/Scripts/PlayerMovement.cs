@@ -83,7 +83,7 @@ public class PlayerMovement : MonoBehaviour
     {
         inputManager.isGrounded = Time.time >= nextGroundCheckTime && Physics.CheckSphere(groundCheck.position, groundCheckRadius, ground);
 
-        Debug.Log("Player is on Ground:" + inputManager.isGrounded);
+        //Debug.Log("Player is on Ground:" + inputManager.isGrounded);
     }
     
     public void RotatePlayer()
