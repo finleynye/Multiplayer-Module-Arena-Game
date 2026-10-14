@@ -20,9 +20,13 @@ public class PlayerState : MonoBehaviour
 
     private void OnEnable()
     {
+        //Spawned player prefabs find the manager in the current scene.
+        if (gameStateManager == null)
+            gameStateManager = FindFirstObjectByType<GameStateManager>();
+
         if (gameStateManager == null)
         {
-            Debug.LogWarning("Assign a GameStateManager to PlayerState in the Inspector", this); return;
+            Debug.LogWarning("No GameStateManager found in the scene", this); return;
         }
 
         gameStateManager.StateChanged += HandleGameStateChanged;

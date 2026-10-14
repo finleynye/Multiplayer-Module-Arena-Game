@@ -2,6 +2,20 @@ using Unity.Netcode;
 using Unity.Netcode.Components;
 using UnityEngine;
 using System.Collections.Generic;
+using System.Collections;
+using System.Runtime.InteropServices;
+using System.ComponentModel;
+
+public enum MovementState
+{
+    Idle,
+    Move,
+    Jump,
+    Dash,
+    Push,
+
+    Dead
+}
 public class PlayerMovement : NetworkBehaviour
 {
 
@@ -9,13 +23,17 @@ public class PlayerMovement : NetworkBehaviour
     public InputManager inputManager;
 
     [Header("Move Values")]
+    [SerializeField] private MovementState movementState;
     public float movementSpeed = 5f;
     public Transform orientation;
     public float turnSpeed = 540f; //degrees per second
 
     [Header("Dash Inpulse Speed")]
     public float dashImpulseSpeed = 10f;
+    [SerializeField] private float dashUpImpulse = 1.5f;
     public bool hasDashed;
+    [SerializeField] private float dashDuration = 0.15f;
+    private float dashEndTime;
     private float nextDashTime;
 
     [Header("Jump Force")]
@@ -32,6 +50,8 @@ public class PlayerMovement : NetworkBehaviour
     [Header("Push Force")]
     [SerializeField] private float pushForce = 5f;
     public bool hasPushed;
+    [SerializeField] private float pushDuration = 0.3f;
+    private float pushEndTime;
     private float nextPushTime;
     //check push cooldown separately on the server
     private float nextServerPushTime;
@@ -46,9 +66,12 @@ public class PlayerMovement : NetworkBehaviour
     public Rigidbody rb;
     private NetworkAnimator networkAnimator;
 
+    private bool isDead;
+
 
     void Awake()
     {
+        movementState = MovementState.Idle;
         rb = GetComponent<Rigidbody>();
         //cache the network animator so dash and push are sent to other clients
         networkAnimator = GetComponentInChildren<NetworkAnimator>();
@@ -57,7 +80,7 @@ public class PlayerMovement : NetworkBehaviour
     void FixedUpdate()
     {
         //only move the player owned by this client after it has spawned
-        if (!IsSpawned || !IsOwner)
+        if (!IsSpawned || !IsOwner || isDead)
             return;
         
         //consume ground check rotation of player and dash impulse on input
@@ -67,19 +90,19 @@ public class PlayerMovement : NetworkBehaviour
         Push();
 
 
-        if (hasDashed && Time.time >= nextDashTime - inputManager.dashCooldownTime + 0.15f)
+        if (hasDashed && Time.time >= dashEndTime)
             hasDashed = false;
 
         //dont overwrite horizontal velocity while dashing or being pushed
         if (!hasDashed && Time.time >= knockbackEndTime)
+        {
             rb.linearVelocity = new Vector3(inputManager.moveInput.x * movementSpeed, rb.linearVelocity.y, inputManager.moveInput.y * movementSpeed);
+        }
         
-
         //if were allowed to jump and were grounded and the currrent y velocity is 0 then we can jump
         if (inputManager.jumpReady && inputManager.isGrounded && rb.linearVelocity.y <= 0f)
         {
             rb.AddForce(Vector3.up * jumpForce, ForceMode.Impulse);
-
             nextGroundCheckTime = Time.time + groundCheckDelay;
             inputManager.isGrounded = false;
         }
@@ -88,6 +111,18 @@ public class PlayerMovement : NetworkBehaviour
         //when not grounded apply extra downward force on the character
         if (!inputManager.isGrounded)
             rb.AddForce(Vector3.down * 20f, ForceMode.Acceleration);
+
+        //choose one state each tick, with actions taking priority
+        if (hasDashed)
+            movementState = MovementState.Dash;
+        else if (Time.time < pushEndTime)
+            movementState = MovementState.Push;
+        else if (!inputManager.isGrounded)
+            movementState = MovementState.Jump;
+        else if (inputManager.moveInput.sqrMagnitude > 0f)
+            movementState = MovementState.Move;
+        else
+            movementState = MovementState.Idle;
         
     }
 
@@ -117,10 +152,15 @@ public class PlayerMovement : NetworkBehaviour
         //don't start a dash while were being pushed
         if(inputManager.dashReady && Time.time >= nextDashTime && Time.time >= knockbackEndTime)
         {
-            //add force in the direction that the orientation is facing
-            rb.AddForce(orientation.forward * dashImpulseSpeed, ForceMode.Impulse);
+            //calculate the dash trajectory and normalize its
+            Vector3 dashDirection = Vector3.ProjectOnPlane(orientation.forward, Vector3.up).normalized;
+
+            //add force in the direction that the orientation is facing with a slight upward arc
+            rb.AddForce(dashDirection * dashImpulseSpeed + Vector3.up * dashUpImpulse, ForceMode.Impulse);
+            
             nextDashTime = Time.time + inputManager.dashCooldownTime;
             hasDashed = true;
+            dashEndTime = Time.time + dashDuration;
 
             //send the dash trigger through netcode so everyone sees it
             networkAnimator.SetTrigger("Dash");
@@ -138,6 +178,8 @@ public class PlayerMovement : NetworkBehaviour
 
             //play the animation straight away for responsive input
             networkAnimator.SetTrigger("Push");
+
+            pushEndTime = Time.time + pushDuration;
 
             nextPushTime = Time.time + inputManager.pushCooldownTime;
         }
@@ -186,5 +228,60 @@ public class PlayerMovement : NetworkBehaviour
         knockbackEndTime = Time.time + knockbackTime;
 
         rb.AddForce(force, ForceMode.Impulse);
+    }
+
+    public override void OnNetworkSpawn()
+    {
+        base.OnNetworkSpawn();
+
+        if(!IsOwner) return;
+
+        SpawnManager spawnManager = FindFirstObjectByType<SpawnManager>();
+
+        if(spawnManager != null)
+            spawnManager.SpawnPlayer(this);
+    }
+
+    public void Die()
+    {
+        if (!IsOwner || isDead) return;
+
+        StartCoroutine(RespawnCountdown());
+    }
+
+    private IEnumerator RespawnCountdown()
+    {
+        //player dead freeze velocity
+        isDead = true;
+        movementState = MovementState.Dead;
+        RoundManager roundManager = FindFirstObjectByType<RoundManager>();
+
+        int deathRound = roundManager.CurrentRound;
+
+        if (roundManager != null && roundManager.alivePlayersLeft > 0)
+            roundManager.alivePlayersLeft--;
+        
+        ActivateRagdoll ragdoll = GetComponentInChildren<ActivateRagdoll>();
+
+        ragdoll.EnableRagdoll();
+
+        //next round players respawn
+        yield return new WaitUntil(() => roundManager.CurrentRound != deathRound);
+
+        rb.linearVelocity = Vector3.zero;
+        ragdoll.DisableRagdoll();
+       // rb.isKinematic = true;
+
+        SpawnManager spawnManager = FindFirstObjectByType<SpawnManager>();
+
+        if(spawnManager != null)
+            spawnManager.SpawnPlayer(this);
+
+        isDead = false;
+
+        hasDashed = false;
+        pushEndTime = 0f;
+        movementState = MovementState.Idle;
+
     }
 }

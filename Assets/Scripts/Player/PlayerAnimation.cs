@@ -23,5 +23,6 @@ public class PlayerAnimation : NetworkBehaviour
 
         anim.SetFloat("movementSpeed", velocity.magnitude, 0.025f, Time.deltaTime);
         anim.SetBool("isGrounded", inputManager.isGrounded);
+        anim.SetBool("isDashing", playerMovement.hasDashed);
     }
 }

@@ -19,9 +19,11 @@ public class GameStateManager : MonoBehaviour
     public event Action<GameState> StateChanged;
 
     //players add themselves when enabled and remove themselves when disabled
-    [SerializeField] private List<PlayerState> players = new List<PlayerState>();
+    [SerializeField] public List<PlayerState> players = new List<PlayerState>();
     //how many players need to be ready before the game starts
     [SerializeField, Min(1)] private int requiredReadies = 2;
+
+    public bool GameHasStarted = false;
 
     void OnEnable()
     {
@@ -121,10 +123,17 @@ public class GameStateManager : MonoBehaviour
 
     public void GameStarted()
     {
+        //can't start with one player
+        if (players.Count < 2)
+            return;
+
         //Debug.Log("Game Starterd");
         //only start the game from the lobby
         if (CurrentGameState == GameState.Lobby)
+        {
             ChangeState(GameState.GameStarted);
+            GameHasStarted = true;
+        }
     }
 
     public void GameOver()
@@ -132,7 +141,11 @@ public class GameStateManager : MonoBehaviour
         //Debug.Log("Game Over");
         //only end the game if we're currently playing
         if (CurrentGameState == GameState.GameStarted)
+        {
             ChangeState(GameState.GameOver);
+            GameHasStarted = false;
+
+        }
     }
 
     public void ResetGame()
