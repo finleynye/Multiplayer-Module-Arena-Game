@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-
+using Unity.Netcode;
 public enum GameState
 {
     Lobby,
@@ -10,10 +10,15 @@ public enum GameState
     Reset
 }
 
-public class GameStateManager : MonoBehaviour
+public class GameStateManager : NetworkBehaviour
 {
-    //other scripts can read the state but only this script can change CurrentGameState
-    public GameState CurrentGameState { get; private set; } = GameState.Lobby;
+    //everyone can read the game state but only the server can change it
+    private NetworkVariable<GameState> gameState = new(GameState.Lobby, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+
+    public GameState CurrentGameState => gameState.Value;
+
+    //read this from the current state so we dont need a separate bool
+    public bool GameHasStarted =>  CurrentGameState == GameState.GameStarted;
 
     //let other scripts respond when the game state changes
     public event Action<GameState> StateChanged;
@@ -23,8 +28,6 @@ public class GameStateManager : MonoBehaviour
 
     //how many players need to be ready before the game starts
     [SerializeField, Min(1)] private int requiredReadies = 2;
-
-    public bool GameHasStarted = false;
 
     void OnEnable()
     {
@@ -84,11 +87,11 @@ public class GameStateManager : MonoBehaviour
         player.ReadyChanged += CheckReadies;
     }
 
-    //the event passes a bool but we count everyone's current ready status
+    //the event passes a bool but we count everyones current ready status
     void CheckReadies(bool ready = false)
     {
-        //only check readiness while we're in the lobby
-        if (!isActiveAndEnabled || CurrentGameState != GameState.Lobby)
+        //only the server checks whether enough players are ready
+        if (!isActiveAndEnabled || CurrentGameState != GameState.Lobby || !IsSpawned || !IsServer)
             return;
 
         int readyCount = 0;
@@ -104,16 +107,13 @@ public class GameStateManager : MonoBehaviour
             GameStarted();
     }
 
-    //all state changes go through here so listeners are notified once
+    //only the server changes the state, the network callback notifies listeners
     private void ChangeState(GameState nextState)
     {
-        //don't send the event again if we're already in this state
-        if (CurrentGameState == nextState)
+        if (!IsSpawned || !IsServer || CurrentGameState == nextState)
             return;
 
-        CurrentGameState = nextState;
-        Debug.Log($"Game state: {nextState}");
-        StateChanged?.Invoke(nextState);
+        gameState.Value = nextState;
     }
 
     public void Lobby()
@@ -124,7 +124,7 @@ public class GameStateManager : MonoBehaviour
 
     public void GameStarted()
     {
-        //can't start with one player
+        //need enough players before the game can start
         if (players.Count < requiredReadies)
             return;
 
@@ -132,7 +132,6 @@ public class GameStateManager : MonoBehaviour
         //only start the game from the lobby
         if (CurrentGameState == GameState.Lobby)
         {
-            GameHasStarted = true;
             ChangeState(GameState.GameStarted);
         }
     }
@@ -143,9 +142,7 @@ public class GameStateManager : MonoBehaviour
         //only end the game if we're currently playing
         if (CurrentGameState == GameState.GameStarted)
         {
-            GameHasStarted = false;
             ChangeState(GameState.GameOver);
-
         }
     }
 
@@ -159,5 +156,30 @@ public class GameStateManager : MonoBehaviour
         //let the players reset then return to the lobby
         ChangeState(GameState.Reset);
         Lobby();
+    }
+
+    public override void OnNetworkSpawn()
+    {
+        //listen for game state changes shared over the network
+        gameState.OnValueChanged += HandleNetworkStateChanged;
+
+        //apply the current state, including when joining late
+        StateChanged?.Invoke(CurrentGameState);
+
+        if (IsServer)
+            CheckReadies();
+    }
+
+    public override void OnNetworkDespawn()
+    {
+        //stop listening when this network object despawns
+        gameState.OnValueChanged -= HandleNetworkStateChanged;
+    }
+
+    //let local scripts respond when the shared game state changes
+    private void HandleNetworkStateChanged(GameState previousState, GameState nextState)
+    {
+        Debug.Log($"Game state: {nextState}");
+        StateChanged?.Invoke(nextState);
     }
 }
