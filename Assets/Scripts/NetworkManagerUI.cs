@@ -1,7 +1,5 @@
 using UnityEngine;
 using UnityEngine.UI;
-using TMPro;
-using System;
 using Unity.Netcode;
 public class NetworkManagerUI : MonoBehaviour
 {
@@ -10,20 +8,11 @@ public class NetworkManagerUI : MonoBehaviour
     [SerializeField] private Button clientButton;
     private void Awake()
     {
-        serverButton.onClick.AddListener(() =>
-        {
-            NetworkManager.Singleton.StartServer();
-        });
+        serverButton.onClick.AddListener(() => {NetworkManager.Singleton.StartServer();});
 
-        hostButton.onClick.AddListener(() =>
-        {
-            NetworkManager.Singleton.StartHost();
-        });
+        hostButton.onClick.AddListener(() => {NetworkManager.Singleton.StartHost();});
 
-        clientButton.onClick.AddListener(() =>
-        {
-            NetworkManager.Singleton.StartClient();
-        });
+        clientButton.onClick.AddListener(() => {NetworkManager.Singleton.StartClient();});
     }
 
 }

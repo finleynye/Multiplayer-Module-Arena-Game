@@ -66,6 +66,15 @@ public class PlayerState : MonoBehaviour
         ReadyChanged?.Invoke(ready);
     }
 
+    public void StartRound()
+    {
+        if (gameStateManager == null || gameStateManager.CurrentGameState != GameState.GameStarted)
+            return;
+
+        ChangeReady(false);
+        ChangeState(PlayerStatus.Alive);
+    }
+
     public void Eliminate()
     {
         if (Status != PlayerStatus.Alive)

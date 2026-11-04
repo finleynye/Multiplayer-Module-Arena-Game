@@ -9,26 +9,25 @@ public class InputManager : MonoBehaviour
     //input action asset
     public InputActionAsset actions;
 
-    [Header("Player Input Values")]
-    //move
+    [Header("Move Input")]
     private InputAction moveAction;
     public Vector2 moveInput;
 
-    //jump
+    [Header("Jump Input")]
     private InputAction jumpAction;
     public bool isGrounded;
     public bool jumpReady;
 
-    //dash
+    [Header("Dash Input")]
     private InputAction dashAction;
     public float dashCooldownTime = 1.2f;
     public bool dashReady;
 
-    //push
-
+    [Header("Push Input")]
     private InputAction pushAction;
     public float pushCooldownTime = 2f;
     public bool pushReady;
+    
 
     void Awake()
     {
@@ -61,6 +60,7 @@ public class InputManager : MonoBehaviour
         actions.Disable();
 
         moveAction.canceled -= OnMove;
+        
         jumpAction.performed -= OnJump;
         dashAction.performed -= OnDash;
         pushAction.performed -= OnPush;

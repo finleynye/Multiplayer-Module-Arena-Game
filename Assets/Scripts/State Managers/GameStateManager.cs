@@ -12,7 +12,7 @@ public enum GameState
 
 public class GameStateManager : MonoBehaviour
 {
-    //other scripts can read the state but only this script can change it
+    //other scripts can read the state but only this script can change CurrentGameState
     public GameState CurrentGameState { get; private set; } = GameState.Lobby;
 
     //let other scripts respond when the game state changes
@@ -20,6 +20,7 @@ public class GameStateManager : MonoBehaviour
 
     //players add themselves when enabled and remove themselves when disabled
     [SerializeField] public List<PlayerState> players = new List<PlayerState>();
+
     //how many players need to be ready before the game starts
     [SerializeField, Min(1)] private int requiredReadies = 2;
 
@@ -124,15 +125,15 @@ public class GameStateManager : MonoBehaviour
     public void GameStarted()
     {
         //can't start with one player
-        if (players.Count < 2)
+        if (players.Count < requiredReadies)
             return;
 
         //Debug.Log("Game Starterd");
         //only start the game from the lobby
         if (CurrentGameState == GameState.Lobby)
         {
-            ChangeState(GameState.GameStarted);
             GameHasStarted = true;
+            ChangeState(GameState.GameStarted);
         }
     }
 
@@ -142,8 +143,8 @@ public class GameStateManager : MonoBehaviour
         //only end the game if we're currently playing
         if (CurrentGameState == GameState.GameStarted)
         {
-            ChangeState(GameState.GameOver);
             GameHasStarted = false;
+            ChangeState(GameState.GameOver);
 
         }
     }
