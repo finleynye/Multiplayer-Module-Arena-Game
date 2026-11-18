@@ -1,19 +1,24 @@
 using System;
 using UnityEngine;
 using UnityEngine.Events;
+using Unity.Netcode;
 public enum PlayerStatus
 {
     Lobby,
     Alive,
     Eliminated,
 }
-public class PlayerState : MonoBehaviour
+public class PlayerState : NetworkBehaviour
 {
     public UnityEvent isDead = new UnityEvent();
     [SerializeField] private GameStateManager gameStateManager;
 
     public PlayerStatus Status { get; private set; } = PlayerStatus.Lobby;
-    public bool IsReady { get; private set; }
+
+    //everyone reads readiness but only the server changes it
+    private NetworkVariable<bool> readyState = new(false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+
+    public bool IsReady => readyState.Value;
 
     public event Action<PlayerStatus> StateChanged;
     public event Action<bool> ReadyChanged;
@@ -49,9 +54,40 @@ public class PlayerState : MonoBehaviour
         ChangeReady(false);
     }
 
+    public override void OnNetworkSpawn()
+    {
+        readyState.OnValueChanged += HandleReadyChanged;
+
+        //apply readiness already received when joining
+        ReadyChanged?.Invoke(IsReady);
+    }
+
+    public override void OnNetworkDespawn()
+    {
+        readyState.OnValueChanged -= HandleReadyChanged;
+    }
+
+    private void HandleReadyChanged(bool previousReady, bool nextReady)
+    {
+        //notify the manager when shared readiness changes
+        ReadyChanged?.Invoke(nextReady);
+    }
+
     public void SetReady(bool ready)
     {
-        if (gameStateManager == null || gameStateManager.CurrentGameState != GameState.Lobby)
+        //only our own player sends readiness requests
+        if (!IsSpawned || !IsOwner)
+            return;
+
+        RequestReadyRpc(ready);
+    }
+
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
+    private void RequestReadyRpc(bool ready)
+    {
+        //the server only accepts readiness changes in the lobby
+        if (gameStateManager == null ||
+            gameStateManager.CurrentGameState != GameState.Lobby)
             return;
 
         ChangeReady(ready);
@@ -59,11 +95,11 @@ public class PlayerState : MonoBehaviour
 
     private void ChangeReady(bool ready)
     {
-        if (IsReady == ready)
+        //internal resets also go through the server
+        if (!IsSpawned || !IsServer || IsReady == ready)
             return;
 
-        IsReady = ready;
-        ReadyChanged?.Invoke(ready);
+        readyState.Value = ready;
     }
 
     public void StartRound()

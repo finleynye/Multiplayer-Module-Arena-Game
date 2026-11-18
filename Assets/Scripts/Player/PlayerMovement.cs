@@ -92,8 +92,10 @@ public class PlayerMovement : NetworkBehaviour
             return;
 
 
-        if (roundManager.BetweenRounds)
+        if (roundManager != null && roundManager.ControlsLocked)
         {
+            //use a standing pose while held at the spawn point
+            inputManager.isGrounded = true;
             inputManager.jumpReady = false;
             inputManager.dashReady = false;
             inputManager.pushReady = false;
@@ -323,7 +325,8 @@ public class PlayerMovement : NetworkBehaviour
         RoundManager roundManager = FindFirstObjectByType<RoundManager>();
         //the last player has already won this round
 
-        if (roundManager != null && roundManager.RoundWinner != null) return;
+        //only allow eliminations during an active round
+        if (roundManager != null && (!roundManager.RoundIsActive || roundManager.RoundWinner != null)) return;
 
         StartCoroutine(RespawnCountdown());
     }

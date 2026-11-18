@@ -1,6 +1,7 @@
 using UnityEngine;
 using TMPro;
-public class RoundUI : MonoBehaviour
+using Unity.Netcode;
+public class RoundUI : NetworkBehaviour
 {
     [SerializeField] private RoundManager roundManager;
     [SerializeField] private GameStateManager gameStateManager;
@@ -25,8 +26,25 @@ public class RoundUI : MonoBehaviour
         //show the next round while waiting
         if (roundManager.BetweenRounds)
         {
+
             roundPanel.SetActive(true);
-            roundBeginningLabel.text = roundManager.CurrentRound == 4 ? "GAME ENDS IN" : $"ROUND {roundManager.CurrentRound + 2} BEGINS IN";
+            roundBeginningLabel.text = roundManager.OpeningCountdown ? "ROUND 1 BEGINS IN" : roundManager.CurrentRound == 4 ? "GAME ENDS IN" : $"ROUND {roundManager.CurrentRound + 2} BEGINS IN";
+            //show each player the result above the countdown message
+            if (!roundManager.OpeningCountdown)
+            {
+                string result;
+
+                if (!roundManager.HasRoundWinner)
+                    result = "ROUND DRAW";
+                else if (roundManager.WinnerClientId ==
+                        NetworkManager.Singleton.LocalClientId)
+                    result = "YOU WIN!";
+                else
+                    result = $"PLAYER {roundManager.WinnerClientId + 1} WINS!";
+
+                roundBeginningLabel.text =
+                    result + "\n" + roundBeginningLabel.text;
+            }
             countdownLabel.text = Mathf.CeilToInt(roundManager.Countdown).ToString();
             return;
         }

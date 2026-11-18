@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
-
+using Unity.Netcode;
 enum NumberOfRounds
 {
     One,
@@ -9,21 +9,48 @@ enum NumberOfRounds
     Four,
     Five
 }
-public class RoundManager : MonoBehaviour
+
+enum RoundPhase
 {
-    [SerializeField] private NumberOfRounds numOfRounds;
+    Waiting,
+    OpeningCountdown,
+    Playing,
+    BetweenRounds,
+    Finished
+}
+public class RoundManager : NetworkBehaviour
+{
+    //only the server chooses the current round
+    private NetworkVariable<NumberOfRounds> numOfRounds = new(NumberOfRounds.One, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
     [SerializeField] private GameStateManager gameStateManager;
 
-    public int CurrentRound => (int)numOfRounds;
+    public int CurrentRound => (int)numOfRounds.Value;
     public PlayerState RoundWinner { get; private set; }
-    private bool roundsStarted;
 
-    private float countdownDuration = 5f;
-    private bool betweenRounds = false;
+    //only the server decides when players wait or play
+    private NetworkVariable<RoundPhase> phase = new(RoundPhase.Waiting);
 
-    public bool BetweenRounds => betweenRounds;
-    public float Countdown => countdownDuration;
+    //everyone counts down towards the same server time
+    private NetworkVariable<double> countdownEndsAt = new(0d);
 
+    //share the winner's owner ID, max value means no winner
+    private NetworkVariable<ulong> winnerClientId = new(ulong.MaxValue);
+
+    public ulong WinnerClientId => winnerClientId.Value;
+    public bool HasRoundWinner => winnerClientId.Value != ulong.MaxValue;
+
+    public bool BetweenRounds => phase.Value == RoundPhase.OpeningCountdown || phase.Value == RoundPhase.BetweenRounds;
+
+    public bool OpeningCountdown => phase.Value == RoundPhase.OpeningCountdown;
+
+    public bool RoundIsActive =>
+        phase.Value == RoundPhase.Playing &&
+        gameStateManager != null &&
+        gameStateManager.GameHasStarted;
+
+    public bool ControlsLocked => BetweenRounds || phase.Value == RoundPhase.Finished;
+
+    public float Countdown => !IsSpawned || !BetweenRounds ? 0f : Mathf.Max(0f,(float)(countdownEndsAt.Value - NetworkManager.ServerTime.Time));
 
     //list of players within a round
     private readonly List<PlayerState> trackedPlayers = new List<PlayerState>();
@@ -44,96 +71,117 @@ public class RoundManager : MonoBehaviour
         HandleGameStateChanged(gameStateManager.CurrentGameState);
     }
 
+    public override void OnNetworkSpawn()
+    {
+        phase.OnValueChanged += HandlePhaseChanged;
+
+        if (gameStateManager != null)
+            HandleGameStateChanged(gameStateManager.CurrentGameState);
+
+        //apply the phase already received when joining
+        if (!IsServer)
+            HandlePhaseChanged(phase.Value, phase.Value);
+    }
+
+    public override void OnNetworkDespawn()
+    {
+        phase.OnValueChanged -= HandlePhaseChanged;
+    }
+
+    private void HandlePhaseChanged(RoundPhase previousPhase, RoundPhase nextPhase)
+    {
+        SyncPlayerSubscriptions();
+
+        if (nextPhase == RoundPhase.Playing)
+        {
+            StartRound();
+            return;
+        }
+
+        if (nextPhase != RoundPhase.OpeningCountdown &&
+            nextPhase != RoundPhase.BetweenRounds)
+            return;
+
+        //each owner resets their own player while controls are locked
+        SpawnManager spawnManager = FindFirstObjectByType<SpawnManager>();
+
+        foreach (PlayerState player in trackedPlayers)
+        {
+            PlayerMovement movement = player.GetComponent<PlayerMovement>();
+
+            if (movement == null || !movement.IsOwner)
+                continue;
+
+            movement.ResetForNextRound();
+
+            if (spawnManager != null)
+                spawnManager.SpawnPlayer(movement);
+        }
+    }
+
     //start the round before physics can report a player falling off
     private void HandleGameStateChanged(GameState state)
     {
-        if (state != GameState.GameStarted)
-        {
-            roundsStarted = false;
-            betweenRounds = false;
-            RoundWinner = null;
+        if (!IsSpawned || !IsServer)
             return;
+
+        if (state == GameState.GameStarted)
+        {
+            if (phase.Value != RoundPhase.Waiting)
+                return;
+
+            numOfRounds.Value = NumberOfRounds.One;
+            RoundWinner = null;
+            BeginCountdown(RoundPhase.OpeningCountdown);
         }
-        SyncPlayerSubscriptions();
-        //keep eliminations if the manager was only disabled for a moment
-        if (roundsStarted) return;
-        numOfRounds = NumberOfRounds.One;
-        StartRound();
-        roundsStarted = true;
-        Debug.Log($"Round started: {playersInGame} total, {alivePlayersLeft} alive");
+        else
+        {
+            phase.Value = state == GameState.GameOver ? RoundPhase.Finished : RoundPhase.Waiting;
+            RoundWinner = null;
+        }
     }
-    
+
+    private void BeginCountdown(RoundPhase countdownPhase)
+    {
+        //set the deadline before telling everyone to prepare
+        countdownEndsAt.Value = NetworkManager.ServerTime.Time + 5d;
+        phase.Value = countdownPhase;
+    }
     void Update()
     {
         SyncPlayerSubscriptions();
 
-        if (gameStateManager == null || !gameStateManager.GameHasStarted)
+        //clients respond to shared phases instead of deciding transitions
+        if (!IsSpawned || !IsServer ||
+            gameStateManager == null || !gameStateManager.GameHasStarted)
+            return;
+
+        if (BetweenRounds)
         {
-            roundsStarted = false;
-            playersInGame = gameStateManager != null ? gameStateManager.players.Count : 0;
+            if (Countdown <= 0f)
+            {
+                if (OpeningCountdown)
+                    phase.Value = RoundPhase.Playing;
+                else
+                    NextRound();
+            }
+
             return;
         }
 
-        if (betweenRounds)
-        {
-            countdownDuration -= Time.deltaTime;
-
-            if (countdownDuration <= 0)
-                NextRound();
-
+        if (!RoundIsActive)
             return;
-        }
 
-        //also check the count in case both players died before we saved a winner
         if (RoundWinner != null || (playersInGame >= 2 && alivePlayersLeft <= 1))
         {
             if (RoundWinner == null && alivePlayersLeft == 1)
                 RoundWinner = trackedPlayers.Find(player => player != null && player.Status == PlayerStatus.Alive);
 
+            //save the result before starting the between-round countdown
+            winnerClientId.Value = RoundWinner != null ? RoundWinner.GetComponent<PlayerMovement>().OwnerClientId : ulong.MaxValue;
+
             Debug.Log(RoundWinner != null ? $"{RoundWinner.name} wins" : "Round draw");
-
-            betweenRounds = true;
-            countdownDuration = 5f;
-
-            SpawnManager spawnManager = FindFirstObjectByType<SpawnManager>();
-
-            foreach (PlayerState player in trackedPlayers)
-            {
-                PlayerMovement movement = player.GetComponent<PlayerMovement>();
-
-                if (movement == null || !movement.IsOwner)
-                    continue;
-
-                movement.ResetForNextRound();
-
-                if (spawnManager != null)
-                    spawnManager.SpawnPlayer(movement);
-            }
-        }
-
-
-        //round specific behaviour
-        switch (numOfRounds)
-        {
-            case NumberOfRounds.One:
-                //round one behaviour
-            break;
-
-            case NumberOfRounds.Two:
-                //round two behaviour
-            break;
-
-            case NumberOfRounds.Three:
-                //round threee behaviour
-            break;
-
-            case NumberOfRounds.Four:
-                //round four behaviour
-            break;
-
-            case NumberOfRounds.Five:
-                //round five behaviour
-            break; 
+            BeginCountdown(RoundPhase.BetweenRounds);
         }
     }
 
@@ -188,13 +236,18 @@ public class RoundManager : MonoBehaviour
             if (player != null && player.Status == PlayerStatus.Alive)
                 alivePlayersLeft++;
 
-        //save the winner as soon as the other player dies
-        if (roundsStarted && RoundWinner == null && status == PlayerStatus.Eliminated && playersInGame >= 2 && alivePlayersLeft == 1)
+        //only the server saves a winner during active play
+        if (IsServer && RoundIsActive && RoundWinner == null && status == PlayerStatus.Eliminated && playersInGame >= 2 && alivePlayersLeft == 1)
             RoundWinner = trackedPlayers.Find(player => player != null && player.Status == PlayerStatus.Alive);
+        
     }
 
     private void StartRound()
     {
+        //clear the previous result when play resumes
+        if (IsServer)
+            winnerClientId.Value = ulong.MaxValue;
+
         //put eliminated players back in for the next round
         foreach (PlayerState player in trackedPlayers)
             player.StartRound();
@@ -205,24 +258,19 @@ public class RoundManager : MonoBehaviour
 
     public void NextRound()
     {
-        if (!roundsStarted || !gameStateManager.GameHasStarted)
+        if (!IsSpawned || !IsServer ||
+            gameStateManager == null || !gameStateManager.GameHasStarted ||
+            phase.Value != RoundPhase.BetweenRounds ||
+            Countdown > 0f)
             return;
 
-
-        betweenRounds = false;
-        if (numOfRounds == NumberOfRounds.Five)
+        if (numOfRounds.Value == NumberOfRounds.Five)
         {
-            roundsStarted = false;
-            RoundWinner = null;
             gameStateManager.GameOver();
             return;
         }
 
-        numOfRounds++;
-        playersInGame = gameStateManager.players.Count;
-
-        StartRound();
-        Debug.Log($"Round started: {playersInGame} total, {alivePlayersLeft} alive");
-        
+        numOfRounds.Value++;
+        phase.Value = RoundPhase.Playing;
     }
 }

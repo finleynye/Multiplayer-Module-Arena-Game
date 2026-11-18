@@ -4340,6 +4340,7 @@ GameObject:
   - component: {fileID: 1078194633}
   - component: {fileID: 1078194634}
   - component: {fileID: 1078194635}
+  - component: {fileID: 1078194636}
   m_Layer: 0
   m_Name: RoundManager
   m_TagString: Untagged
@@ -4374,7 +4375,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 723525ced18de4eaeaf4e6f8857f3fee, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RoundManager
-  numOfRounds: 0
+  ShowTopMostFoldoutHeaderGroup: 1
   gameStateManager: {fileID: 2072239295}
   playersInGame: 0
   alivePlayersLeft: 0
@@ -4390,11 +4391,39 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 98c813202f7c42e4b615000eb204b103, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RoundUI
+  ShowTopMostFoldoutHeaderGroup: 1
   roundManager: {fileID: 1078194634}
   gameStateManager: {fileID: 2072239295}
   roundPanel: {fileID: 1845872246}
   roundBeginningLabel: {fileID: 520679757}
   countdownLabel: {fileID: 1352608271}
+--- !u!114 &1078194636
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1078194632}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
+  GlobalObjectIdHash: 1407148260
+  InScenePlacedSourceGlobalObjectIdHash: 0
+  m_InScenePlacedDisabledByDefault: 0
+  DeferredDespawnTick: 0
+  Ownership: 1
+  AlwaysReplicateAsRoot: 0
+  SynchronizeTransform: 1
+  m_InScenePlaced: 1
+  ActiveSceneSynchronization: 0
+  SceneMigrationSynchronization: 0
+  SpawnWithObservers: 1
+  DontDestroyWithOwner: 0
+  AutoObjectParentSync: 1
+  SyncOwnerTransformWhenParented: 1
+  AllowOwnerToParent: 0
 --- !u!1 &1082173212
 GameObject:
   m_ObjectHideFlags: 0
@@ -7844,8 +7873,8 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 2072239296}
-  - component: {fileID: 2072239295}
   - component: {fileID: 2072239297}
+  - component: {fileID: 2072239295}
   m_Layer: 0
   m_Name: GameStateManager
   m_TagString: Untagged
