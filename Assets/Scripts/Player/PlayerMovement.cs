@@ -75,6 +75,13 @@ public class PlayerMovement : NetworkBehaviour
     private bool isDead;
     private PlayerState playerState;
 
+    //allow lobby interactions or active players before a winner is chosen
+    private bool CanInteract =>
+        IsSpawned && playerState.Status != PlayerStatus.Eliminated &&
+        roundManager != null && !roundManager.ControlsLocked &&
+        (playerState.Status == PlayerStatus.Lobby ||
+        (roundManager.RoundIsActive && roundManager.RoundWinner == null));
+
 
     void Awake()
     {
@@ -175,7 +182,7 @@ public class PlayerMovement : NetworkBehaviour
     private void Dash()
     {
         //don't start a dash while were being pushed
-        if(inputManager.dashReady && Time.time >= nextDashTime && Time.time >= knockbackEndTime)
+        if(CanInteract && inputManager.dashReady && Time.time >= nextDashTime && Time.time >= knockbackEndTime)
         {
             //calculate the dash trajectory and normalize its
             Vector3 dashDirection = Vector3.ProjectOnPlane(orientation.forward, Vector3.up).normalized;
@@ -199,7 +206,7 @@ public class PlayerMovement : NetworkBehaviour
     //play our push animation straight away but let the server check who we hit
     private void Push()
     {
-        if (inputManager.pushReady && Time.time >= nextPushTime)
+        if (CanInteract && inputManager.pushReady && Time.time >= nextPushTime)
         {
             //ask the server to check the push
             RequestPushRpc();
@@ -218,11 +225,11 @@ public class PlayerMovement : NetworkBehaviour
     //check who our player touches while diving then ask the server to knock them back
     private void OnCollisionStay(Collision collision)
     {
-        if (!IsSpawned || !IsOwner || isDead || !hasDashed || Time.time >= dashEndTime) return;
+        if (!CanInteract || !IsOwner || isDead || !hasDashed || Time.time >= dashEndTime) return;
         PlayerMovement target = collision.collider.GetComponentInParent<PlayerMovement>();
 
         //only hit each player once during the dive
-        if (target != null && target != this && target.IsSpawned && diveHits.Add(target))
+        if (target != null && target != this && target.CanInteract && diveHits.Add(target))
             RequestDiveHitRpc(target.NetworkObject);
     }
 
@@ -233,6 +240,8 @@ public class PlayerMovement : NetworkBehaviour
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
     private void StartDiveRpc()
     {
+        if (!CanInteract) return;
+
         //remember the dive direction and hit window on the server
         serverDiveDirection = Vector3.ProjectOnPlane(orientation.forward, Vector3.up).normalized;
         serverDiveEndTime = Time.time + dashDuration;
@@ -243,10 +252,10 @@ public class PlayerMovement : NetworkBehaviour
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
     private void RequestDiveHitRpc(NetworkObjectReference targetReference)
     {
-        if (Time.time >= serverDiveEndTime || !targetReference.TryGet(out NetworkObject targetObject)) return;
+        if (!CanInteract || Time.time >= serverDiveEndTime || !targetReference.TryGet(out NetworkObject targetObject)) return;
         PlayerMovement target = targetObject.GetComponent<PlayerMovement>();
 
-        if (target == null || target == this || !target.IsSpawned) return;
+        if (target == null || target == this || !target.CanInteract) return;
 
         //check they are close enough and use the same force as a push
         if (Vector3.Distance(rb.position, target.rb.position) > pushCheckRadius * 2f) return;
@@ -260,7 +269,7 @@ public class PlayerMovement : NetworkBehaviour
     private void RequestPushRpc()
     {
         //check the cooldown on the server as well
-        if (Time.time < nextServerPushTime)
+        if (!CanInteract || Time.time < nextServerPushTime)
             return;
 
         nextServerPushTime = Time.time + inputManager.pushCooldownTime;
@@ -278,8 +287,8 @@ public class PlayerMovement : NetworkBehaviour
         {
             PlayerMovement target = hit.GetComponentInParent<PlayerMovement>();
 
-            //ignore ourselves and anything that isn't a spawned player
-            if (target == null || target == this || !target.IsSpawned)
+            //ignore ourselves and players who cant interact
+            if (target == null || target == this || !target.CanInteract)
                 continue;
 
             if (!pushedPlayers.Add(target))
@@ -294,6 +303,9 @@ public class PlayerMovement : NetworkBehaviour
     [Rpc(SendTo.Owner, InvokePermission = RpcInvokePermission.Server)]
     private void ApplyKnockbackRpc(Vector3 force)
     {
+        //ignore hits received after elimination or while controls are locked
+        if (!CanInteract) return;
+
         //leave horizontal velocity alone briefly so the push can move us
         knockbackEndTime = Time.time + knockbackTime;
 
@@ -343,6 +355,10 @@ public class PlayerMovement : NetworkBehaviour
         if (isDead) return;
 
         isDead = true;
+        hasDashed = false;
+        serverDiveEndTime = 0f;
+        diveHits.Clear();
+        serverDiveHits.Clear();
         movementState = MovementState.Dead;
         GetComponentInChildren<ActivateRagdoll>().EnableRagdoll();
     }
@@ -359,6 +375,9 @@ public class PlayerMovement : NetworkBehaviour
 
         isDead = false;
         hasDashed = false;
+        serverDiveEndTime = 0f;
+        diveHits.Clear();
+        serverDiveHits.Clear();
         pushEndTime = 0f;
         knockbackEndTime = 0f;
 
