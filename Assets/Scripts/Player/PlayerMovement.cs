@@ -313,10 +313,10 @@ public class PlayerMovement : NetworkBehaviour
             spawnManager.SpawnPlayer(this);
     }
 
-    //start our death and respawn locally, EliminateRpc tells everyone were eliminated
+    //only the server confirms death, the owner handles the ragdoll
     public void Die()
     {
-        if (isDead || (IsSpawned && !IsOwner)) return;
+        if (!IsSpawned || !IsServer) return;
         //dont start waiting for a new round while were still in the lobby
         PlayerState playerState = GetComponent<PlayerState>();
 
@@ -326,34 +326,27 @@ public class PlayerMovement : NetworkBehaviour
         //the last player has already won this round
 
         //only allow eliminations during an active round
-        if (roundManager != null && (!roundManager.RoundIsActive || roundManager.RoundWinner != null)) return;
+        if (roundManager == null || !roundManager.RoundIsActive || roundManager.RoundWinner != null) return;
 
-        StartCoroutine(RespawnCountdown());
+        EliminateRpc();
     }
 
-    //runs on everyone so they count the same elimination, Die only starts on our client
-    [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Owner)]
+    //share the server confirmed elimination with everyone
+    [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Server)]
     private void EliminateRpc()
     {
         GetComponent<PlayerState>()?.Eliminate();
+
+        if (IsOwner && !isDead)
+            StartCoroutine(RespawnCountdown());
     }
 
-    //handle our ragdoll and respawn here, the rpc only shares our eliminated state
+    //the owner applies death presentation after the server confirms it
     private IEnumerator RespawnCountdown()
     {
         //player dead freeze velocity
         isDead = true;
         movementState = MovementState.Dead;
-        RoundManager roundManager = FindFirstObjectByType<RoundManager>();
-
-        int deathRound = roundManager != null ? roundManager.CurrentRound : -1;
-
-        //only send an rpc while networking is running
-        if (IsSpawned && NetworkManager != null && NetworkManager.IsListening)
-            EliminateRpc();
-        else
-            GetComponent<PlayerState>()?.Eliminate();
-        
         ActivateRagdoll ragdoll = GetComponentInChildren<ActivateRagdoll>();
 
         ragdoll.EnableRagdoll();

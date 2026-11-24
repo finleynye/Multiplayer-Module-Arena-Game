@@ -36,9 +36,7 @@ public class AreaBoundary : MonoBehaviour
 
             if (Mathf.Abs(position.x) > halfSize.x || Mathf.Abs(position.y) > halfSize.y || Mathf.Abs(position.z) > halfSize.z)
             {
-                if (!movement.IsOwner) continue;
-
-                if (player.Status == PlayerStatus.Lobby)
+                if (player.Status == PlayerStatus.Lobby && movement.IsOwner)
                 {
                     movement.rb.linearVelocity = Vector3.zero;
 
@@ -46,7 +44,7 @@ public class AreaBoundary : MonoBehaviour
                     if (spawnManager != null)
                         spawnManager.SpawnPlayer(movement);
                 }
-                else if (gameStateManager.GameHasStarted && player.Status == PlayerStatus.Alive)
+                else if (movement.IsSpawned && movement.IsServer && gameStateManager.GameHasStarted && player.Status == PlayerStatus.Alive)
                     movement.Die();
                 
             }
