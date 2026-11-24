@@ -7,7 +7,7 @@ public class ActivateRagdoll : MonoBehaviour
     CapsuleCollider col;
     Animator animator;
    
-    void Start()
+    void Awake()
     {
         col = GetComponentInParent<PlayerMovement>().GetComponent<CapsuleCollider>();
         rigidbodies = GetComponentsInChildren<Rigidbody>();

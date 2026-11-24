@@ -13,7 +13,10 @@ public class PlayerState : NetworkBehaviour
     public UnityEvent isDead = new UnityEvent();
     [SerializeField] private GameStateManager gameStateManager;
 
-    public PlayerStatus Status { get; private set; } = PlayerStatus.Lobby;
+    //everyone reads player status but only the server changes it
+    private NetworkVariable<PlayerStatus> playerStatus = new(PlayerStatus.Lobby, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+
+    public PlayerStatus Status => playerStatus.Value;
 
     //everyone reads readiness but only the server changes it
     private NetworkVariable<bool> readyState = new(false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
@@ -57,6 +60,13 @@ public class PlayerState : NetworkBehaviour
     public override void OnNetworkSpawn()
     {
         readyState.OnValueChanged += HandleReadyChanged;
+        playerStatus.OnValueChanged += HandleStatusChanged;
+
+        if (gameStateManager != null)
+            HandleGameStateChanged(gameStateManager.CurrentGameState);
+
+        //apply the status already received when joining
+        HandleStatusChanged(Status, Status);
 
         //apply readiness already received when joining
         ReadyChanged?.Invoke(IsReady);
@@ -65,6 +75,7 @@ public class PlayerState : NetworkBehaviour
     public override void OnNetworkDespawn()
     {
         readyState.OnValueChanged -= HandleReadyChanged;
+        playerStatus.OnValueChanged -= HandleStatusChanged;
     }
 
     private void HandleReadyChanged(bool previousReady, bool nextReady)
@@ -113,20 +124,31 @@ public class PlayerState : NetworkBehaviour
 
     public void Eliminate()
     {
-        if (Status != PlayerStatus.Alive)
+        if (!IsSpawned || !IsServer || Status != PlayerStatus.Alive)
+            return;
+
+        RoundManager roundManager = FindFirstObjectByType<RoundManager>();
+
+        if (roundManager == null || !roundManager.RoundIsActive || roundManager.RoundWinner != null)
             return;
 
         ChangeState(PlayerStatus.Eliminated);
-        isDead?.Invoke();
     }
 
     private void ChangeState(PlayerStatus nextState)
     {
-        if (Status == nextState)
+        if (!IsSpawned || !IsServer || Status == nextState)
             return;
 
-        Status = nextState;
-        StateChanged?.Invoke(nextState);
+        playerStatus.Value = nextState;
+    }
+
+    private void HandleStatusChanged(PlayerStatus previousStatus, PlayerStatus nextStatus)
+    {
+        StateChanged?.Invoke(nextStatus);
+
+        if (nextStatus == PlayerStatus.Eliminated)
+            isDead?.Invoke();
     }
 
     private void HandleGameStateChanged(GameState state)

@@ -2,7 +2,6 @@ using Unity.Netcode;
 using Unity.Netcode.Components;
 using UnityEngine;
 using System.Collections.Generic;
-using System.Collections;
 
 public enum MovementState
 {
@@ -74,12 +73,14 @@ public class PlayerMovement : NetworkBehaviour
     private NetworkAnimator networkAnimator;
     private RoundManager roundManager;
     private bool isDead;
+    private PlayerState playerState;
 
 
     void Awake()
     {
         movementState = MovementState.Idle;
         rb = GetComponent<Rigidbody>();
+        playerState = GetComponent<PlayerState>();
         //cache the network animator so dash and push are sent to other clients
         networkAnimator = GetComponentInChildren<NetworkAnimator>();
         roundManager = FindFirstObjectByType<RoundManager>();
@@ -305,7 +306,10 @@ public class PlayerMovement : NetworkBehaviour
     {
         base.OnNetworkSpawn();
 
-        if(!IsOwner) return;
+        playerState.StateChanged += HandlePlayerStateChanged;
+        HandlePlayerStateChanged(playerState.Status);
+
+        if (!IsOwner || playerState.Status == PlayerStatus.Eliminated) return;
 
         SpawnManager spawnManager = FindFirstObjectByType<SpawnManager>();
 
@@ -313,50 +317,43 @@ public class PlayerMovement : NetworkBehaviour
             spawnManager.SpawnPlayer(this);
     }
 
-    //only the server confirms death, the owner handles the ragdoll
+    public override void OnNetworkDespawn()
+    {
+        playerState.StateChanged -= HandlePlayerStateChanged;
+        base.OnNetworkDespawn();
+    }
+
+    //the player state checks whether the server can accept this death
     public void Die()
     {
-        if (!IsSpawned || !IsServer) return;
-        //dont start waiting for a new round while were still in the lobby
-        PlayerState playerState = GetComponent<PlayerState>();
-
-        if (playerState == null || playerState.Status != PlayerStatus.Alive) return;
-
-        RoundManager roundManager = FindFirstObjectByType<RoundManager>();
-        //the last player has already won this round
-
-        //only allow eliminations during an active round
-        if (roundManager == null || !roundManager.RoundIsActive || roundManager.RoundWinner != null) return;
-
-        EliminateRpc();
+        playerState.Eliminate();
     }
 
-    //share the server confirmed elimination with everyone
-    [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Server)]
-    private void EliminateRpc()
+    //apply the shared status without deciding deaths locally
+    private void HandlePlayerStateChanged(PlayerStatus status)
     {
-        GetComponent<PlayerState>()?.Eliminate();
+        if (status != PlayerStatus.Eliminated)
+        {
+            if (isDead)
+                ResetForNextRound();
 
-        if (IsOwner && !isDead)
-            StartCoroutine(RespawnCountdown());
-    }
+            return;
+        }
 
-    //the owner applies death presentation after the server confirms it
-    private IEnumerator RespawnCountdown()
-    {
-        //player dead freeze velocity
+        if (isDead) return;
+
         isDead = true;
         movementState = MovementState.Dead;
-        ActivateRagdoll ragdoll = GetComponentInChildren<ActivateRagdoll>();
-
-        ragdoll.EnableRagdoll();
-        yield break;
+        GetComponentInChildren<ActivateRagdoll>().EnableRagdoll();
     }
 
     public void ResetForNextRound()
     {
-        rb.linearVelocity = Vector3.zero;
-        rb.angularVelocity = Vector3.zero;
+        if (IsOwner)
+        {
+            rb.linearVelocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+        }
 
         GetComponentInChildren<ActivateRagdoll>().DisableRagdoll();
 

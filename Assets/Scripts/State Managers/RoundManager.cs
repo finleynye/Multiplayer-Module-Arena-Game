@@ -102,19 +102,19 @@ public class RoundManager : NetworkBehaviour
             nextPhase != RoundPhase.BetweenRounds)
             return;
 
-        //each owner resets their own player while controls are locked
+        //reset presentation for everyone, each owner moves their own player
         SpawnManager spawnManager = FindFirstObjectByType<SpawnManager>();
 
         foreach (PlayerState player in trackedPlayers)
         {
             PlayerMovement movement = player.GetComponent<PlayerMovement>();
 
-            if (movement == null || !movement.IsOwner)
+            if (movement == null)
                 continue;
 
             movement.ResetForNextRound();
 
-            if (spawnManager != null)
+            if (movement.IsOwner && spawnManager != null)
                 spawnManager.SpawnPlayer(movement);
         }
     }
